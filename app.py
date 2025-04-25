@@ -213,6 +213,8 @@ Maddeleri açık ve anlaşılır yaz. Süs karakterleri kullanma.
         "yorum": yorum_result
     })
 
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 # Flask uygulamasını başlatıyoruz
-if __name__ == '__main__':  # Ana modül olarak çalıştırıldığında
-    app.run(debug=True, port=8501)  # Flask uygulamasını başlatıyoruz
+'''if __name__ == '__main__':  # Ana modül olarak çalıştırıldığında
+    app.run(debug=True, port=8501)'''  # Flask uygulamasını başlatıyoruz
