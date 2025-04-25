@@ -1,4 +1,77 @@
-# Gerekli kütüphaneleri içe aktarıyoruz
+from flask import Flask, render_template, request, jsonify
+from werkzeug.utils import secure_filename
+import os
+import requests
+import uuid
+
+app = Flask(__name__)
+UPLOAD_FOLDER = 'static/uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg'}
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/kombin-olustur', methods=['POST'])
+def kombin_olustur():
+    if 'files[]' not in request.files:
+        return jsonify({"error": "Dosya bulunamadı"}), 400
+
+    files = request.files.getlist('files[]')
+    if len(files) < 2:
+        return jsonify({"error": "En az 2 kıyafet resmi yüklemelisiniz."}), 400
+
+    tarz = request.form.get('tarz', 'Casual')
+    mevsim = request.form.get('mevsim', 'İlkbahar')
+    image_descriptions = []
+
+    for file in files:
+        if file and allowed_file(file.filename):
+            filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+
+            # BLIP çağrısı
+            blip_api = os.environ.get("BLIP_API_URL")
+            resp = requests.post(blip_api, files={'image': open(filepath, 'rb')})
+            desc = resp.json().get("description", "")
+            image_descriptions.append(desc)
+
+    gemma_api = os.environ.get("GEMMA_API_URL")
+    gemma_prompt = f"""
+Sen moda uzmanısın. Şu kıyafetleri "{tarz}" tarzda ve "{mevsim}" mevsimine uygun analiz et:
+{', '.join(image_descriptions)}
+
+Lütfen aşağıdaki başlıklara 1-2 cümlelik profesyonel ve sade cevaplar ver. Başlıkları belirt:
+Kıyafet Analizi:
+Renk Uyumu:
+Kombin Önerisi:
+Kombin Yorumu:
+Alternatif Kombin:
+"""
+
+    response = requests.post(gemma_api, json={"prompt": gemma_prompt})
+    if response.status_code == 200:
+        answer = response.json().get("response", "")
+    else:
+        answer = "Model yanıt vermedi."
+
+    return jsonify({
+        "blip_aciklamalari": image_descriptions,
+        "gemma_cevabi": answer
+    })
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+
+
+
+
+'''# Gerekli kütüphaneleri içe aktarıyoruz
 from flask import Flask, render_template, request, jsonify  # Flask ve ilgili modülleri içe aktarıyoruz
 import os  # İşletim sistemi ile ilgili işlemler için os modülünü içe aktarıyoruz
 from PIL import Image  # Görüntü işleme için PIL kütüphanesini içe aktarıyoruz
@@ -216,5 +289,7 @@ Maddeleri açık ve anlaşılır yaz. Süs karakterleri kullanma.
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 # Flask uygulamasını başlatıyoruz
-'''if __name__ == '__main__':  # Ana modül olarak çalıştırıldığında
-    app.run(debug=True, port=8501)'''  # Flask uygulamasını başlatıyoruz
+if __name__ == '__main__':  # Ana modül olarak çalıştırıldığında
+    app.run(debug=True, port=8501) # Flask uygulamasını başlatıyoruz
+
+'''
