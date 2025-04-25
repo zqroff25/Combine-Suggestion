@@ -35,13 +35,15 @@ def kombin_olustur():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
 
-            # BLIP çağrısı
-            blip_api = os.environ.get("BLIP_API_URL")
-            resp = requests.post(blip_api, files={'image': open(filepath, 'rb')})
-            desc = resp.json().get("description", "")
+            try:
+                blip_api = os.environ.get("BLIP_API_URL")
+                resp = requests.post(blip_api, files={'image': open(filepath, 'rb')}, timeout=40)
+                desc = resp.json().get("description", "")
+            except Exception as e:
+                return jsonify({"error": f"BLIP servisinden yanıt alınamadı: {str(e)}"}), 500
+
             image_descriptions.append(desc)
 
-    gemma_api = os.environ.get("GEMMA_API_URL")
     gemma_prompt = f"""
 Sen moda uzmanısın. Şu kıyafetleri "{tarz}" tarzda ve "{mevsim}" mevsimine uygun analiz et:
 {', '.join(image_descriptions)}
@@ -54,21 +56,85 @@ Kombin Yorumu:
 Alternatif Kombin:
 """
 
-    response = requests.post(gemma_api, json={"prompt": gemma_prompt})
-    if response.status_code == 200:
-        answer = response.json().get("response", "")
-    else:
-        answer = "Model yanıt vermedi."
+    try:
+        gemma_api = os.environ.get("GEMMA_API_URL")
+        response = requests.post(gemma_api, json={"prompt": gemma_prompt}, timeout=40)
+        if response.status_code == 200:
+            answer = response.json().get("response", "")
+        else:
+            answer = f"Model hata verdi: {response.status_code}"
+    except Exception as e:
+        return jsonify({"error": f"GEMMA servisinden yanıt alınamadı: {str(e)}"}), 500
 
     return jsonify({
         "blip_aciklamalari": image_descriptions,
         "gemma_cevabi": answer
     })
 
+@app.route('/yorum-olustur', methods=['POST'])
+def yorum_olustur():
+    yorum_text = request.form.get('yorum', '')
+    file = request.files.get('yorumFile')
+    description = ""
+    if file and allowed_file(file.filename):
+        filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        try:
+            blip_api = os.environ.get("BLIP_API_URL")
+            resp = requests.post(blip_api, files={'image': open(filepath, 'rb')}, timeout=40)
+            description = resp.json().get("description", "")
+        except Exception as e:
+            return jsonify({"error": f"BLIP servisinden yanıt alınamadı: {str(e)}"}), 500
+
+    tarz = request.form.get('yorumTarz', 'Casual')
+    mevsim = request.form.get('yorumMevsim', 'İlkbahar')
+    cinsiyet = request.form.get('cinsiyet', 'Diğer')
+    yas_araligi = request.form.get('yasAraligi', '0-5')
+
+    full_description = " ".join([yorum_text, description]).strip()
+    if not full_description:
+        return jsonify({"error": "Yorum veya görsel gerekli"}), 400
+
+    gemma_yorum_prompt = f"""
+Sen deneyimli bir moda stil danışmanısın. Kullanıcının tanımladığı veya görsel olarak paylaştığı kıyafeti analiz et. 
+Yorumun hem kıyafetin genel şıklığını hem de giyilebilecek ortamı ve küçük önerileri içersin.
+
+Kullanıcı bilgileri:
+- Tarz: {tarz}
+- Mevsim: {mevsim}
+- Cinsiyet: {cinsiyet}
+- Yaş Aralığı: {yas_araligi}
+
+seçilen cinsiyet ve mevsime göre önerilerde bulun:
+- Eğer cinsiyet 'Erkek' ise, daha maskülen, erkeklik gösteren, bluz gibi şeyler olmayan ve şık bir kombin öner.
+- Eğer cinsiyet 'Kadın' ise, daha feminen ve kadınsı ve şık bir kombin öner.
+- Mevsime uygun kumaş ve renk seçimleri yap.
+
+Yalnızca şu formatta cevap ver:
+Kıyafet Yorumu:
+- Kıyafeti kısa ve profesyonel bir dille değerlendir.
+- Uygun ortam/tören için görüş belirt.
+- Dilersen 1 küçük dokunuş öner.
+
+Maddeleri açık ve anlaşılır yaz. Süs karakterleri kullanma.
+"""
+
+    try:
+        gemma_api = os.environ.get("GEMMA_API_URL")
+        response = requests.post(gemma_api, json={"prompt": gemma_yorum_prompt + "\n" + full_description}, timeout=40)
+        if response.status_code == 200:
+            gemma_yorum_answer = response.json().get('response', '')
+            yorum_result = gemma_yorum_answer.strip()
+        else:
+            yorum_result = f"Model hata verdi: {response.status_code}"
+    except Exception as e:
+        return jsonify({"error": f"GEMMA servisinden yanıt alınamadı: {str(e)}"}), 500
+
+    return jsonify({"yorum": yorum_result})
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
-
-
 
 
 '''# Gerekli kütüphaneleri içe aktarıyoruz
